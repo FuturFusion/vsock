@@ -1,20 +1,15 @@
-//go:build !linux
-// +build !linux
+//go:build !linux && !windows
+// +build !linux,!windows
 
 package vsock
 
 import (
-	"fmt"
+	"context"
 	"net"
 	"os"
-	"runtime"
 	"syscall"
 	"time"
 )
-
-// errUnimplemented is returned by all functions on platforms that
-// cannot make use of VM sockets.
-var errUnimplemented = fmt.Errorf("vsock: not implemented on %s", runtime.GOOS)
 
 func fileListener(_ *os.File) (*Listener, error)       { return nil, errUnimplemented }
 func listen(_, _ uint32, _ *Config) (*Listener, error) { return nil, errUnimplemented }
@@ -26,7 +21,7 @@ func (*listener) Addr() net.Addr                { return nil }
 func (*listener) Close() error                  { return errUnimplemented }
 func (*listener) SetDeadline(_ time.Time) error { return errUnimplemented }
 
-func dial(_, _ uint32, _ *Config) (*Conn, error) { return nil, errUnimplemented }
+func dial(_ context.Context, _, _ uint32, _ *Config) (*Conn, error) { return nil, errUnimplemented }
 
 type conn struct{}
 
