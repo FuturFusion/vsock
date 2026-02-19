@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FuturFusion/vsock"
+	"github.com/FuturFusion/vsock/internal/vsutil"
 	"github.com/google/go-cmp/cmp"
-	"github.com/mdlayher/vsock"
-	"github.com/mdlayher/vsock/internal/vsutil"
 	"golang.org/x/net/nettest"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"

@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mdlayher/vsock"
+	"github.com/FuturFusion/vsock"
 )
 
 // IsHypervisor detects if this machine is a hypervisor by determining if

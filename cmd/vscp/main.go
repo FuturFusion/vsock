@@ -13,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/mdlayher/vsock"
+	"github.com/FuturFusion/vsock"
 )
 
 var flagVerbose = flag.Bool("v", false, "enable verbose logging to stderr")
