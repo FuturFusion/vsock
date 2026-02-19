@@ -49,6 +49,8 @@ func dial(ctx context.Context, contextID, port uint32, _ *Config) (*Conn, error)
 }
 
 type conn struct {
+	id            int
+	listener      *listener
 	r             sync.Mutex
 	w             sync.Mutex
 	ctx           context.Context
@@ -74,6 +76,7 @@ func (c *conn) Close() error {
 	if c.closed.CompareAndSwap(false, true) {
 		syscall.Shutdown(c.fd, syscall.SHUT_RDWR)
 		syscall.Closesocket(c.fd)
+		c.listener.deleteConn(c.id)
 		return nil
 	}
 	return nil
