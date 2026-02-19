@@ -1,11 +1,13 @@
 package vsock
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -53,6 +55,10 @@ const (
 	opSyscallConn = "syscall-conn"
 	opWrite       = "write"
 )
+
+// errUnimplemented is returned by all functions on platforms that
+// cannot make use of VM sockets.
+var errUnimplemented = fmt.Errorf("vsock: not implemented on %s", runtime.GOOS)
 
 // TODO(mdlayher): plumb through socket.Config.NetNS if it makes sense.
 
@@ -176,7 +182,11 @@ func (l *Listener) opError(op string, err error) error {
 // When the connection is no longer needed, Close must be called to free
 // resources.
 func Dial(contextID, port uint32, cfg *Config) (*Conn, error) {
-	c, err := dial(contextID, port, cfg)
+	return DialContext(context.Background(), contextID, port, cfg)
+}
+
+func DialContext(ctx context.Context, contextID, port uint32, cfg *Config) (*Conn, error) {
+	c, err := dial(ctx, contextID, port, cfg)
 	if err != nil {
 		// No local address, but we have a remote address we can return.
 		return nil, opError(opDial, err, nil, &Addr{
