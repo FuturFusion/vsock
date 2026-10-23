@@ -53,32 +53,45 @@ func listen(contextID, port uint32, _ *Config) (*Listener, error) {
 	return &Listener{l: l}, nil
 }
 
-func (l *listener) accept(ctx context.Context) (*conn, *sockaddrVM, error) {
-	afd, peer, err := accept(l.fd)
-	if err != nil {
-		return nil, nil, err
+func (l *listener) accept(ctx context.Context) (*conn, *Addr, error) {
+	for {
+		afd, err := accept(l.fd)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// viosock knows the peer only while the connection is open. A peer
+		// that closed before the accept leaves nothing to serve, so skip its
+		// connection, as the net package does for a connection reset before
+		// AcceptEx completes.
+		peer, err := getpeername(afd)
+		if err != nil {
+			syscall.Closesocket(afd)
+			continue
+		}
+
+		err = setnonblock(afd, true)
+		if err != nil {
+			syscall.Closesocket(afd)
+			return nil, nil, fmt.Errorf("Failed to set non-blocking: %w", err)
+		}
+
+		l.Lock()
+
+		// use a growing ID for each additional connection.
+		l.connCount += 1
+		c := &conn{
+			id:       l.connCount,
+			fd:       afd,
+			ctx:      ctx,
+			listener: l,
+		}
+
+		l.conns[c.id] = c
+		l.Unlock()
+
+		return c, peer, nil
 	}
-
-	err = setnonblock(afd, true)
-	if err != nil {
-		return nil, nil, fmt.Errorf("Failed to set non-blocking: %w", err)
-	}
-
-	l.Lock()
-	defer l.Unlock()
-
-	// use a growing ID for each additional connection.
-	l.connCount += 1
-	c := &conn{
-		id:       l.connCount,
-		fd:       afd,
-		ctx:      ctx,
-		listener: l,
-	}
-
-	l.conns[c.id] = c
-
-	return c, &peer, nil
 }
 
 func (l *listener) deleteConn(id int) {
@@ -102,7 +115,7 @@ func (l *listener) Accept() (net.Conn, error) {
 	return &Conn{
 		c:      c,
 		local:  l.addr,
-		remote: &Addr{ContextID: peer.cid, Port: peer.port},
+		remote: peer,
 	}, nil
 }
 

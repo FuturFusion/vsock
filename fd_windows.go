@@ -71,9 +71,10 @@ func waitSelectOrTimeout(rfd, wfd syscall.Handle, deadlineFunc func() bool) erro
 	}
 }
 
-func accept(fd syscall.Handle) (handle syscall.Handle, psa sockaddrVM, err error) {
-	salen := unsafe.Sizeof(psa)
-	r0, _, e1 := syscall.SyscallN(procAccept.Addr(), uintptr(fd), uintptr(unsafe.Pointer(&psa)), uintptr(unsafe.Pointer(&salen)))
+// accept asks for no peer address: viosock fails such an accept with WSAEINVAL
+// when the peer has already closed the connection.
+func accept(fd syscall.Handle) (handle syscall.Handle, err error) {
+	r0, _, e1 := syscall.SyscallN(procAccept.Addr(), uintptr(fd), 0, 0)
 	handle = syscall.Handle(r0)
 	if handle == syscall.InvalidHandle {
 		err = errnoErr(e1)
