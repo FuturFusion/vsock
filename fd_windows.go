@@ -23,6 +23,7 @@ const (
 	_IOCTL_GET_CONFIG = 0x08013004
 	_IOCTL_GET_AF     = 0x0801300C
 	_timeout          = time.Millisecond * 1000
+	_acceptPoll       = time.Millisecond * 500
 )
 
 var (
@@ -69,6 +70,17 @@ func waitSelectOrTimeout(rfd, wfd syscall.Handle, deadlineFunc func() bool) erro
 			return nil
 		}
 	}
+}
+
+// waitReadable waits up to dur for fd to become readable. Running out of
+// time is not an error, although viosock 0.1.302 fails such a select with
+// WSAETIMEDOUT.
+func waitReadable(fd syscall.Handle, dur time.Duration) error {
+	err := ioselect(fd, 0, dur)
+	if err == errTimeout {
+		return nil
+	}
+	return err
 }
 
 // accept asks for no peer address: viosock fails such an accept with WSAEINVAL

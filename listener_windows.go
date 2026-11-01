@@ -45,6 +45,13 @@ func listen(contextID, port uint32, _ *Config) (*Listener, error) {
 		return nil, err
 	}
 
+	// accept must never pend in the driver, see acceptReady.
+	err = setnonblock(syscall.Handle(fd), true)
+	if err != nil {
+		syscall.Closesocket(syscall.Handle(fd))
+		return nil, err
+	}
+
 	l := &listener{
 		fd:    syscall.Handle(fd),
 		addr:  &Addr{ContextID: contextID, Port: port},
@@ -53,9 +60,34 @@ func listen(contextID, port uint32, _ *Config) (*Listener, error) {
 	return &Listener{l: l}, nil
 }
 
+// acceptReady accepts without ever pending in the driver: a pended viosock
+// accept can miss the wakeup of a new connection and never return
+// (virtio-win/kvm-guest-drivers-windows#1684). While the queue is empty it
+// waits in select, at most _acceptPoll at a time, because select may not
+// report a connection still queued behind an accepted one.
+func (l *listener) acceptReady() (syscall.Handle, error) {
+	for !l.closed.Load() {
+		afd, err := accept(l.fd)
+		if err == syscall.EAGAIN {
+			err = waitReadable(l.fd, _acceptPoll)
+			if err == nil {
+				continue
+			}
+		}
+		if l.closed.Load() {
+			if afd != syscall.InvalidHandle {
+				syscall.Closesocket(afd)
+			}
+			break
+		}
+		return afd, err
+	}
+	return syscall.InvalidHandle, net.ErrClosed
+}
+
 func (l *listener) accept(ctx context.Context) (*conn, *Addr, error) {
 	for {
-		afd, err := accept(l.fd)
+		afd, err := l.acceptReady()
 		if err != nil {
 			return nil, nil, err
 		}
