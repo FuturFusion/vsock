@@ -45,6 +45,13 @@ func listen(contextID, port uint32, _ *Config) (*Listener, error) {
 		return nil, err
 	}
 
+	// accept must never pend in the driver, see acceptReady.
+	err = setnonblock(syscall.Handle(fd), true)
+	if err != nil {
+		syscall.Closesocket(syscall.Handle(fd))
+		return nil, err
+	}
+
 	l := &listener{
 		fd:    syscall.Handle(fd),
 		addr:  &Addr{ContextID: contextID, Port: port},
@@ -53,32 +60,70 @@ func listen(contextID, port uint32, _ *Config) (*Listener, error) {
 	return &Listener{l: l}, nil
 }
 
-func (l *listener) accept(ctx context.Context) (*conn, *sockaddrVM, error) {
-	afd, peer, err := accept(l.fd)
-	if err != nil {
-		return nil, nil, err
+// acceptReady accepts without ever pending in the driver: a pended viosock
+// accept can miss the wakeup of a new connection and never return
+// (virtio-win/kvm-guest-drivers-windows#1684). While the queue is empty it
+// waits in select, at most _acceptPoll at a time, because select may not
+// report a connection still queued behind an accepted one.
+func (l *listener) acceptReady() (syscall.Handle, error) {
+	for !l.closed.Load() {
+		afd, err := accept(l.fd)
+		if err == syscall.EAGAIN {
+			err = waitReadable(l.fd, _acceptPoll)
+			if err == nil {
+				continue
+			}
+		}
+		if l.closed.Load() {
+			if afd != syscall.InvalidHandle {
+				syscall.Closesocket(afd)
+			}
+			break
+		}
+		return afd, err
 	}
+	return syscall.InvalidHandle, net.ErrClosed
+}
 
-	err = setnonblock(afd, true)
-	if err != nil {
-		return nil, nil, fmt.Errorf("Failed to set non-blocking: %w", err)
+func (l *listener) accept(ctx context.Context) (*conn, *Addr, error) {
+	for {
+		afd, err := l.acceptReady()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// viosock knows the peer only while the connection is open. A peer
+		// that closed before the accept leaves nothing to serve, so skip its
+		// connection, as the net package does for a connection reset before
+		// AcceptEx completes.
+		peer, err := getpeername(afd)
+		if err != nil {
+			syscall.Closesocket(afd)
+			continue
+		}
+
+		err = setnonblock(afd, true)
+		if err != nil {
+			syscall.Closesocket(afd)
+			return nil, nil, fmt.Errorf("Failed to set non-blocking: %w", err)
+		}
+
+		l.Lock()
+
+		// use a growing ID for each additional connection.
+		l.connCount += 1
+		c := &conn{
+			id:       l.connCount,
+			fd:       afd,
+			ctx:      ctx,
+			listener: l,
+		}
+
+		l.conns[c.id] = c
+		l.Unlock()
+
+		return c, peer, nil
 	}
-
-	l.Lock()
-	defer l.Unlock()
-
-	// use a growing ID for each additional connection.
-	l.connCount += 1
-	c := &conn{
-		id:       l.connCount,
-		fd:       afd,
-		ctx:      ctx,
-		listener: l,
-	}
-
-	l.conns[c.id] = c
-
-	return c, &peer, nil
 }
 
 func (l *listener) deleteConn(id int) {
@@ -102,7 +147,7 @@ func (l *listener) Accept() (net.Conn, error) {
 	return &Conn{
 		c:      c,
 		local:  l.addr,
-		remote: &Addr{ContextID: peer.cid, Port: peer.port},
+		remote: peer,
 	}, nil
 }
 

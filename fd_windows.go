@@ -23,6 +23,7 @@ const (
 	_IOCTL_GET_CONFIG = 0x08013004
 	_IOCTL_GET_AF     = 0x0801300C
 	_timeout          = time.Millisecond * 1000
+	_acceptPoll       = time.Millisecond * 500
 )
 
 var (
@@ -71,9 +72,21 @@ func waitSelectOrTimeout(rfd, wfd syscall.Handle, deadlineFunc func() bool) erro
 	}
 }
 
-func accept(fd syscall.Handle) (handle syscall.Handle, psa sockaddrVM, err error) {
-	salen := unsafe.Sizeof(psa)
-	r0, _, e1 := syscall.SyscallN(procAccept.Addr(), uintptr(fd), uintptr(unsafe.Pointer(&psa)), uintptr(unsafe.Pointer(&salen)))
+// waitReadable waits up to dur for fd to become readable. Running out of
+// time is not an error, although viosock 0.1.302 fails such a select with
+// WSAETIMEDOUT.
+func waitReadable(fd syscall.Handle, dur time.Duration) error {
+	err := ioselect(fd, 0, dur)
+	if err == errTimeout {
+		return nil
+	}
+	return err
+}
+
+// accept asks for no peer address: viosock fails such an accept with WSAEINVAL
+// when the peer has already closed the connection.
+func accept(fd syscall.Handle) (handle syscall.Handle, err error) {
+	r0, _, e1 := syscall.SyscallN(procAccept.Addr(), uintptr(fd), 0, 0)
 	handle = syscall.Handle(r0)
 	if handle == syscall.InvalidHandle {
 		err = errnoErr(e1)
